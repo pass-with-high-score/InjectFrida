@@ -42,6 +42,7 @@ val networkModule = module {
 val dataModule = module {
     singleOf(::GithubRepository)
     single { SettingsManager(androidContext()) }
+    single { app.pwhs.inject.frida.gadget.FridaGadgetManager(androidContext()) }
 }
 
 val rootModule = module {

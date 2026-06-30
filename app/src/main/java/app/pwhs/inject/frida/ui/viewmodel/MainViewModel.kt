@@ -19,7 +19,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 
+data class AppInfo(
+    val name: String,
+    val packageName: String,
+    val sourceDir: String
+)
 class MainViewModel(
     application: Application,
     private val githubRepository: GithubRepository,
@@ -54,11 +61,38 @@ class MainViewModel(
     private val _isServerRunning = MutableStateFlow(false)
     val isServerRunning: StateFlow<Boolean> = _isServerRunning.asStateFlow()
 
+    private val _injectionMode = MutableStateFlow(app.pwhs.inject.frida.data.model.InjectionMode.fromInt(settingsManager.getInjectionMode()))
+    val injectionMode: StateFlow<app.pwhs.inject.frida.data.model.InjectionMode> = _injectionMode.asStateFlow()
+
+    private val _targetApkPath = MutableStateFlow(settingsManager.getTargetApkPath())
+    val targetApkPath: StateFlow<String> = _targetApkPath.asStateFlow()
+
+    private val _installedApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    val installedApps: StateFlow<List<AppInfo>> = _installedApps.asStateFlow()
+
     init {
         addLog("System initialized. Ready to inject.")
         observeWork()
         fetchVersions()
         checkServerStatus()
+        fetchInstalledApps()
+    }
+
+    fun fetchInstalledApps() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val pm = getApplication<Application>().packageManager
+            val packages = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            val apps = packages.filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 || (it.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0 }
+                .map {
+                    AppInfo(
+                        name = pm.getApplicationLabel(it).toString(),
+                        packageName = it.packageName,
+                        sourceDir = it.sourceDir
+                    )
+                }
+                .sortedBy { it.name.lowercase() }
+            _installedApps.value = apps
+        }
     }
 
     private fun checkServerStatus() {
@@ -100,6 +134,16 @@ class MainViewModel(
         settingsManager.setStealthMode(enabled)
     }
 
+    fun updateInjectionMode(mode: app.pwhs.inject.frida.data.model.InjectionMode) {
+        _injectionMode.value = mode
+        settingsManager.setInjectionMode(mode.value)
+    }
+
+    fun updateTargetApkPath(path: String) {
+        _targetApkPath.value = path
+        settingsManager.setTargetApkPath(path)
+    }
+
     fun toggleStartOnBoot(enabled: Boolean) {
         _startOnBoot.value = enabled
         settingsManager.setStartOnBoot(enabled)
@@ -139,15 +183,23 @@ class MainViewModel(
 
     fun startInjection() {
         val version = _selectedVersion.value
+        val mode = _injectionMode.value
         
         addLog("------------------------------------")
         addLog("Starting injection process for version: ${version ?: "Latest"}...")
-        addLog("Port: ${_port.value} | Stealth: ${_stealthMode.value}")
+        addLog("Mode: ${mode.name}")
+        if (mode == app.pwhs.inject.frida.data.model.InjectionMode.ROOT_SERVER) {
+            addLog("Port: ${_port.value} | Stealth: ${_stealthMode.value}")
+        } else {
+            addLog("Target APK: ${_targetApkPath.value}")
+        }
         
         val inputData = Data.Builder()
             .putString("TARGET_VERSION", version)
             .putString("PORT", _port.value)
             .putBoolean("STEALTH_MODE", _stealthMode.value)
+            .putInt("INJECTION_MODE", mode.value)
+            .putString("TARGET_APK_PATH", _targetApkPath.value)
             .build()
             
         val request = OneTimeWorkRequestBuilder<DownloadAndInjectWorker>()

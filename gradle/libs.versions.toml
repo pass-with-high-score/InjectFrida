@@ -15,6 +15,10 @@ okhttp = "4.12.0"
 libsu = "6.0.0"
 xz = "1.10"
 
+dexlib2 = "2.5.2"
+apksig = "8.1.0"
+arsclib = "1.3.8"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -39,6 +43,10 @@ retrofit-converter-gson = { group = "com.squareup.retrofit2", name = "converter-
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 libsu-core = { group = "com.github.topjohnwu.libsu", name = "core", version.ref = "libsu" }
 xz = { group = "org.tukaani", name = "xz", version.ref = "xz" }
+dexlib2 = { group = "org.smali", name = "dexlib2", version.ref = "dexlib2" }
+apksig = { group = "com.android.tools.build", name = "apksig", version.ref = "apksig" }
+arsclib = { group = "io.github.reandroid", name = "ARSCLib", version.ref = "arsclib" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

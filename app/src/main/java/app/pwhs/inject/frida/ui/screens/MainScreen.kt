@@ -45,17 +45,43 @@ fun MainScreen(
     val port by viewModel.port.collectAsState()
     val stealthMode by viewModel.stealthMode.collectAsState()
     val startOnBoot by viewModel.startOnBoot.collectAsState()
+    val injectionMode by viewModel.injectionMode.collectAsState()
+    val targetApkPath by viewModel.targetApkPath.collectAsState()
+    val installedApps by viewModel.installedApps.collectAsState()
 
     var showVersionSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showAppPicker by remember { mutableStateOf(false) }
     
     val versionSheetState = rememberModalBottomSheetState()
     val settingsSheetState = rememberModalBottomSheetState()
+    val appPickerSheetState = rememberModalBottomSheetState()
     
     val isRunning = workState == WorkInfo.State.RUNNING || workState == WorkInfo.State.ENQUEUED
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val apkPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let {
+            coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val tempFile = java.io.File(context.cacheDir, "picked_target.apk")
+                    context.contentResolver.openInputStream(it)?.use { input ->
+                        java.io.FileOutputStream(tempFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    viewModel.updateTargetApkPath(tempFile.absolutePath)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
 
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) {
@@ -105,6 +131,45 @@ fun MainScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             
+            // Injection Mode Selector
+            TabRow(
+                selectedTabIndex = injectionMode.value,
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+            ) {
+                Tab(
+                    selected = injectionMode == app.pwhs.inject.frida.data.model.InjectionMode.ROOT_SERVER,
+                    onClick = { viewModel.updateInjectionMode(app.pwhs.inject.frida.data.model.InjectionMode.ROOT_SERVER) },
+                    text = { Text("Root Server") }
+                )
+                Tab(
+                    selected = injectionMode == app.pwhs.inject.frida.data.model.InjectionMode.NON_ROOT_GADGET,
+                    onClick = { viewModel.updateInjectionMode(app.pwhs.inject.frida.data.model.InjectionMode.NON_ROOT_GADGET) },
+                    text = { Text("Gadget (Non-Root)") }
+                )
+            }
+
+            if (injectionMode == app.pwhs.inject.frida.data.model.InjectionMode.NON_ROOT_GADGET) {
+                OutlinedTextField(
+                    value = targetApkPath,
+                    onValueChange = { viewModel.updateTargetApkPath(it) },
+                    label = { Text("Target APK Path") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        IconButton(onClick = { showAppPicker = true }) {
+                            Icon(
+                                imageVector = androidx.compose.material.icons.Icons.Default.Settings, // Replace with list/apps icon
+                                contentDescription = "Pick Installed App",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                )
+            }
+
             // Minimalist Version Selector
             Box {
                 Surface(
@@ -366,6 +431,62 @@ fun MainScreen(
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 ) {
                     Text("Clean up temporary files", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+
+    // App Picker Bottom Sheet
+    if (showAppPicker) {
+        ModalBottomSheet(
+            onDismissRequest = { showAppPicker = false },
+            sheetState = appPickerSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = { BottomSheetDefaults.DragHandle() }
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)) {
+                Text(
+                    text = "Select Installed App",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(16.dp)
+                )
+                if (installedApps.isEmpty()) {
+                    Text(
+                        text = "Loading apps...",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 500.dp)) {
+                        items(installedApps) { app ->
+                            Surface(
+                                onClick = {
+                                    viewModel.updateTargetApkPath(app.sourceDir)
+                                    coroutineScope.launch { appPickerSheetState.hide() }.invokeOnCompletion {
+                                        if (!appPickerSheetState.isVisible) {
+                                            showAppPicker = false
+                                        }
+                                    }
+                                },
+                                color = Color.Transparent,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                                    Text(
+                                        text = app.name,
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = app.packageName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

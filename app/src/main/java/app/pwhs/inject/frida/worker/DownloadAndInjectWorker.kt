@@ -23,6 +23,7 @@ class DownloadAndInjectWorker(
     private val githubRepository: GithubRepository by inject()
     private val apiService: GithubApiService by inject()
     private val rootManager: FridaRootManager by inject()
+    private val gadgetManager: app.pwhs.inject.frida.gadget.FridaGadgetManager by inject()
 
     companion object {
         private const val TAG = "InjectWorker"
@@ -30,17 +31,38 @@ class DownloadAndInjectWorker(
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Worker started. Checking root access...")
+            val targetVersion = inputData.getString("TARGET_VERSION")
+            val port = inputData.getString("PORT") ?: "27042"
+            val stealthMode = inputData.getBoolean("STEALTH_MODE", false)
+            val injectionMode = inputData.getInt("INJECTION_MODE", 0)
+
+            if (injectionMode == 1) { // NON_ROOT_GADGET
+                val targetApk = inputData.getString("TARGET_APK_PATH")
+                if (targetApk.isNullOrEmpty()) {
+                    Log.e(TAG, "Target APK path is empty.")
+                    return@withContext Result.failure()
+                }
+                
+                // TODO: Here we would pass log updates to UI. Since Worker logs are limited, 
+                // we assume GadgetManager handles it or we log to logcat.
+                val success = gadgetManager.processApk(targetApk, targetVersion) { msg ->
+                    Log.d(TAG, msg)
+                }
+                
+                if (success) {
+                    return@withContext Result.success()
+                } else {
+                    return@withContext Result.failure()
+                }
+            }
+
+            Log.d(TAG, "Worker started. Checking root access for Root Injection...")
             if (!rootManager.isRootGranted()) {
                 Log.e(TAG, "Root access not granted. Aborting.")
                 return@withContext Result.failure()
             }
 
-            val targetVersion = inputData.getString("TARGET_VERSION")
-            val port = inputData.getString("PORT") ?: "27042"
-            val stealthMode = inputData.getBoolean("STEALTH_MODE", false)
-
-            Log.d(TAG, "Fetching release info...")
+            Log.d(TAG, "Fetching release info for Root Injection...")
             val downloadUrl = githubRepository.getFridaServerAssetUrl(targetVersion)
             if (downloadUrl == null) {
                 Log.e(TAG, "Failed to get download URL.")

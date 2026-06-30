@@ -14,4 +14,10 @@ class SettingsManager(context: Context) {
 
     fun isStartOnBoot(): Boolean = prefs.getBoolean("start_on_boot", false)
     fun setStartOnBoot(enabled: Boolean) = prefs.edit().putBoolean("start_on_boot", enabled).apply()
+
+    fun getInjectionMode(): Int = prefs.getInt("injection_mode", 0) // 0: Root Server, 1: Non-Root Gadget
+    fun setInjectionMode(mode: Int) = prefs.edit().putInt("injection_mode", mode).apply()
+
+    fun getTargetApkPath(): String = prefs.getString("target_apk_path", "") ?: ""
+    fun setTargetApkPath(path: String) = prefs.edit().putString("target_apk_path", path).apply()
 }

@@ -63,6 +63,11 @@ dependencies {
     // XZ decompression
     implementation(libs.xz)
 
+    // Dex manipulation and APK signing
+    implementation(libs.dexlib2)
+    implementation(libs.apksig)
+    implementation(libs.arsclib)
+
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
