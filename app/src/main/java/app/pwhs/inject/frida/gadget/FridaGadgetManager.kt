@@ -114,35 +114,44 @@ class FridaGadgetManager(private val context: Context) {
     }
 
     private fun identifyEntryPoint(apkFile: File, unzippedDir: File, onLog: (String) -> Unit): String {
-        onLog("Step 3: Identifying Entry Point using ARSCLib...")
-        var entryPoint = "Landroid/app/Application;" // fallback
+        onLog("Step 3: Modifying AndroidManifest.xml Entry Point using ARSCLib...")
+        var originalAppName = "android.app.Application"
 
         try {
             val apkModule = com.reandroid.apk.ApkModule.loadApkFile(apkFile)
             val manifest = apkModule.androidManifestBlock
             val appElement = manifest?.applicationElement
             if (appElement != null) {
-                // Find android:name attribute
+                // Find existing android:name attribute
                 val attr = appElement.searchAttributeByResourceId(0x01010003) // android:name
-                val appName = attr?.valueAsString
-                if (appName != null) {
-                    onLog("Found application name: $appName")
-                    // Convert "com.example.MyApp" to "Lcom/example/MyApp;"
-                    entryPoint = "L" + appName.replace(".", "/") + ";"
+                if (attr != null && attr.valueAsString != null) {
+                    originalAppName = attr.valueAsString
+                    onLog("Found original application name: $originalAppName")
                 } else {
-                    onLog("No android:name found in <application>. Using fallback.")
+                    onLog("No android:name found in <application>. Using fallback: $originalAppName")
                 }
+                
+                // Change application name to our custom class
+                val nameAttr = appElement.getOrCreateAndroidAttribute("name", 0x01010003)
+                nameAttr.setValueAsString("app.pwhs.inject.frida.FridaApplication")
+                
+                // Write modified manifest back to unzippedDir
+                val manifestFile = File(unzippedDir, "AndroidManifest.xml")
+                manifestFile.outputStream().use { fos ->
+                    manifest.writeBytes(fos)
+                }
+                onLog("AndroidManifest.xml patched successfully.")
             }
         } catch (e: Exception) {
-            onLog("Failed to parse Manifest with ARSCLib: ${e.message}")
+            onLog("Failed to parse/patch Manifest with ARSCLib: ${e.message}")
         }
 
-        onLog("Using target entry class: $entryPoint")
-        return entryPoint
+        onLog("Original target entry class: $originalAppName")
+        return originalAppName
     }
 
-    private fun patchDex(unzippedDir: File, entryPoint: String, onLog: (String) -> Unit) {
-        onLog("Step 4: Patching classes.dex...")
+    private fun patchDex(unzippedDir: File, originalAppName: String, onLog: (String) -> Unit) {
+        onLog("Step 4: Patching classes.dex to add FridaApplication...")
         val classesDex = File(unzippedDir, "classes.dex")
         if (!classesDex.exists()) {
             onLog("Error: classes.dex not found!")
@@ -153,12 +162,17 @@ class FridaGadgetManager(private val context: Context) {
             val opcodes = Opcodes.getDefault()
             val dexFile = DexFileFactory.loadDexFile(classesDex, opcodes)
             
-            // To actually inject Dalvik bytecode requires using DexRewriter and MethodImplementationRewriter
-            // which involves reconstructing instructions. This is highly complex.
-            // For now, we use dexlib2 to read and re-write the file to verify dexlib2 integration works.
+            val newClasses = mutableListOf<org.jf.dexlib2.iface.ClassDef>()
+            newClasses.addAll(dexFile.classes)
+            
+            // Generate our custom Application class
+            val fridaAppClass = createFridaApplicationClass(originalAppName)
+            newClasses.add(fridaAppClass)
+            
+            val newDexFile = org.jf.dexlib2.immutable.ImmutableDexFile(opcodes, newClasses)
             
             val patchedDex = File(unzippedDir, "classes_patched.dex")
-            DexFileFactory.writeDexFile(patchedDex.absolutePath, dexFile)
+            DexFileFactory.writeDexFile(patchedDex.absolutePath, newDexFile)
             
             if (patchedDex.exists()) {
                 classesDex.delete()
@@ -171,6 +185,54 @@ class FridaGadgetManager(private val context: Context) {
         }
     }
 
+    private fun createFridaApplicationClass(originalAppName: String): org.jf.dexlib2.iface.ClassDef {
+        val superType = "L" + originalAppName.replace(".", "/") + ";"
+        val classType = "Lapp/pwhs/inject/frida/FridaApplication;"
+        
+        // <init>()V
+        val initInstructions = listOf(
+            org.jf.dexlib2.immutable.instruction.ImmutableInstruction35c(
+                org.jf.dexlib2.Opcode.INVOKE_DIRECT, 1, 0, 0, 0, 0, 0, 
+                org.jf.dexlib2.immutable.reference.ImmutableMethodReference(superType, "<init>", emptyList(), "V")
+            ),
+            org.jf.dexlib2.immutable.instruction.ImmutableInstruction10x(org.jf.dexlib2.Opcode.RETURN_VOID)
+        )
+        val initImpl = org.jf.dexlib2.immutable.ImmutableMethodImplementation(1, initInstructions, emptyList(), emptyList())
+        val initMethod = org.jf.dexlib2.immutable.ImmutableMethod(
+            classType, "<init>", emptyList(), "V", 
+            org.jf.dexlib2.AccessFlags.PUBLIC.value or org.jf.dexlib2.AccessFlags.CONSTRUCTOR.value, 
+            emptySet(), emptySet(), initImpl
+        )
+        
+        // onCreate()V
+        val onCreateInstructions = listOf(
+            org.jf.dexlib2.immutable.instruction.ImmutableInstruction35c(
+                org.jf.dexlib2.Opcode.INVOKE_SUPER, 1, 1, 0, 0, 0, 0, 
+                org.jf.dexlib2.immutable.reference.ImmutableMethodReference(superType, "onCreate", emptyList(), "V")
+            ),
+            org.jf.dexlib2.immutable.instruction.ImmutableInstruction21c(
+                org.jf.dexlib2.Opcode.CONST_STRING, 0, 
+                org.jf.dexlib2.immutable.reference.ImmutableStringReference("frida-gadget")
+            ),
+            org.jf.dexlib2.immutable.instruction.ImmutableInstruction35c(
+                org.jf.dexlib2.Opcode.INVOKE_STATIC, 1, 0, 0, 0, 0, 0, 
+                org.jf.dexlib2.immutable.reference.ImmutableMethodReference("Ljava/lang/System;", "loadLibrary", listOf("Ljava/lang/String;"), "V")
+            ),
+            org.jf.dexlib2.immutable.instruction.ImmutableInstruction10x(org.jf.dexlib2.Opcode.RETURN_VOID)
+        )
+        val onCreateImpl = org.jf.dexlib2.immutable.ImmutableMethodImplementation(2, onCreateInstructions, emptyList(), emptyList())
+        val onCreateMethod = org.jf.dexlib2.immutable.ImmutableMethod(
+            classType, "onCreate", emptyList(), "V", 
+            org.jf.dexlib2.AccessFlags.PUBLIC.value, 
+            emptySet(), emptySet(), onCreateImpl
+        )
+        
+        return org.jf.dexlib2.immutable.ImmutableClassDef(
+            classType, org.jf.dexlib2.AccessFlags.PUBLIC.value, superType, emptyList(), 
+            "FridaApplication.java", emptySet(), emptySet(), listOf(initMethod, onCreateMethod)
+        )
+    }
+
     private fun zipApk(unzippedDir: File, outputApk: File, onLog: (String) -> Unit) {
         onLog("Step 5: Recompiling (Zipping) APK...")
         FileOutputStream(outputApk).use { fos ->
@@ -178,7 +240,19 @@ class FridaGadgetManager(private val context: Context) {
                 unzippedDir.walkTopDown().forEach { file ->
                     if (file.isFile) {
                         val entryName = file.absolutePath.substringAfter(unzippedDir.absolutePath + "/")
-                        zos.putNextEntry(ZipEntry(entryName))
+                        val entry = ZipEntry(entryName)
+                        
+                        // Android requires certain files to be STORED (uncompressed)
+                        if (entryName == "resources.arsc" || entryName.endsWith(".so") || entryName.endsWith(".png") || entryName.endsWith(".webp")) {
+                            entry.method = ZipEntry.STORED
+                            entry.size = file.length()
+                            entry.compressedSize = file.length()
+                            val crc = java.util.zip.CRC32()
+                            crc.update(file.readBytes())
+                            entry.crc = crc.value
+                        }
+                        
+                        zos.putNextEntry(entry)
                         file.inputStream().use { it.copyTo(zos) }
                         zos.closeEntry()
                     }
@@ -191,23 +265,28 @@ class FridaGadgetManager(private val context: Context) {
     private fun signApk(unsignedApk: File, signedApk: File, onLog: (String) -> Unit) {
         onLog("Step 6: Signing APK...")
         try {
-            // Generate a temporary KeyPair for signing
-            val kpg = KeyPairGenerator.getInstance("RSA")
-            kpg.initialize(2048)
-            val keyPair = kpg.generateKeyPair()
-
-            // In a real scenario, we need a self-signed X509Certificate.
-            // Generating it purely with standard Java/Android APIs is complex and usually requires BouncyCastle.
-            // Here we use the apksig ApkSigner.
+            onLog("Loading keystore from assets...")
+            val ks = KeyStore.getInstance("PKCS12")
+            context.assets.open("sign.jks").use {
+                ks.load(it, "frida123".toCharArray())
+            }
             
-            // NOTE: Since generating a raw X509Certificate from scratch in Android without BouncyCastle
-            // is restricted, we will log the apksig initialization.
+            val privateKey = ks.getKey("frida", "frida123".toCharArray()) as PrivateKey
+            val cert = ks.getCertificate("frida") as X509Certificate
+            
             onLog("Initializing apksig ApkSigner...")
+            val signerConfig = ApkSigner.SignerConfig.Builder("frida", privateKey, listOf(cert)).build()
             
-            // Simulate successful signing to proceed with workflow since cert generation requires more deps
-            unsignedApk.copyTo(signedApk, overwrite = true)
-            onLog("APK signed successfully (Skipped cert gen).")
-            
+            val signer = ApkSigner.Builder(listOf(signerConfig))
+                .setInputApk(unsignedApk)
+                .setOutputApk(signedApk)
+                .setV1SigningEnabled(true)
+                .setV2SigningEnabled(true)
+                .setV3SigningEnabled(true)
+                .build()
+                
+            signer.sign()
+            onLog("APK signed successfully with v1/v2/v3 signatures.")
         } catch (e: Exception) {
             onLog("Signing failed: ${e.message}")
             throw e

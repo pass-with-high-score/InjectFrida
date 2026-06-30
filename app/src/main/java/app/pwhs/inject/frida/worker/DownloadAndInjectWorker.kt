@@ -83,9 +83,25 @@ class DownloadAndInjectWorker(
 
             // 1. Save downloaded stream to .xz file
             Log.d(TAG, "Saving to ${xzFile.absolutePath}")
-            downloadResponse.body()!!.byteStream().use { inputStream ->
+            val body = downloadResponse.body()!!
+            val totalBytes = body.contentLength()
+            body.byteStream().use { inputStream ->
                 FileOutputStream(xzFile).use { outputStream ->
-                    inputStream.copyTo(outputStream)
+                    val buffer = ByteArray(8 * 1024)
+                    var bytesRead: Int
+                    var totalRead = 0L
+                    var lastProgress = 0
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalRead += bytesRead
+                        if (totalBytes > 0) {
+                            val progress = ((totalRead * 100) / totalBytes).toInt()
+                            if (progress != lastProgress) {
+                                lastProgress = progress
+                                setProgress(androidx.work.Data.Builder().putInt("PROGRESS", progress).build())
+                            }
+                        }
+                    }
                 }
             }
 

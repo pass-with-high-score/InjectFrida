@@ -42,6 +42,9 @@ class MainViewModel(
     private val _workState = MutableStateFlow<WorkInfo.State?>(null)
     val workState: StateFlow<WorkInfo.State?> = _workState.asStateFlow()
 
+    private val _downloadProgress = MutableStateFlow(0)
+    val downloadProgress: StateFlow<Int> = _downloadProgress.asStateFlow()
+
     private val _availableVersions = MutableStateFlow<List<String>>(emptyList())
     val availableVersions: StateFlow<List<String>> = _availableVersions.asStateFlow()
 
@@ -161,8 +164,15 @@ class MainViewModel(
 
                 when (workInfo?.state) {
                     WorkInfo.State.ENQUEUED -> addLog("Task enqueued...")
-                    WorkInfo.State.RUNNING -> addLog("Task running: Downloading and injecting...")
+                    WorkInfo.State.RUNNING -> {
+                        val progress = workInfo.progress.getInt("PROGRESS", 0)
+                        _downloadProgress.value = progress
+                        if (progress == 0 && _logs.value.lastOrNull()?.contains("Task running") != true) {
+                            addLog("Task running: Downloading and injecting...")
+                        }
+                    }
                     WorkInfo.State.SUCCEEDED -> {
+                        _downloadProgress.value = 100
                         addLog("SUCCESS: Frida server injected and started!")
                         _isServerRunning.value = true
                         
@@ -173,8 +183,14 @@ class MainViewModel(
                             }
                         }
                     }
-                    WorkInfo.State.FAILED -> addLog("ERROR: Task failed. Check root access and internet connection.")
-                    WorkInfo.State.CANCELLED -> addLog("Task cancelled.")
+                    WorkInfo.State.FAILED -> {
+                        _downloadProgress.value = 0
+                        addLog("ERROR: Task failed. Check root access and internet connection.")
+                    }
+                    WorkInfo.State.CANCELLED -> {
+                        _downloadProgress.value = 0
+                        addLog("Task cancelled.")
+                    }
                     else -> {}
                 }
             }

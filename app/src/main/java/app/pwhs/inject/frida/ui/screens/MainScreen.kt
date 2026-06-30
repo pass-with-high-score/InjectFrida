@@ -48,6 +48,7 @@ fun MainScreen(
     val injectionMode by viewModel.injectionMode.collectAsState()
     val targetApkPath by viewModel.targetApkPath.collectAsState()
     val installedApps by viewModel.installedApps.collectAsState()
+    val downloadProgress by viewModel.downloadProgress.collectAsState()
 
     var showVersionSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
@@ -211,6 +212,7 @@ fun MainScreen(
                 }
                 
                 val statusText = when {
+                    isRunning && downloadProgress in 1..99 -> "Downloading... $downloadProgress%"
                     isRunning -> "Injecting in progress..."
                     isServerRunning -> "Frida is running"
                     else -> "System ready"
@@ -230,7 +232,18 @@ fun MainScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            if (isRunning && downloadProgress > 0) {
+                Spacer(modifier = Modifier.height(16.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { downloadProgress / 100f },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            } else {
+                Spacer(modifier = Modifier.height(32.dp))
+            }
 
             // Dynamic Action Button (Inject / Stop)
             Button(
