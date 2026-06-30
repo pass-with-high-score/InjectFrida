@@ -37,6 +37,8 @@ class DownloadAndInjectWorker(
             }
 
             val targetVersion = inputData.getString("TARGET_VERSION")
+            val port = inputData.getString("PORT") ?: "27042"
+            val stealthMode = inputData.getBoolean("STEALTH_MODE", false)
 
             Log.d(TAG, "Fetching release info...")
             val downloadUrl = githubRepository.getFridaServerAssetUrl(targetVersion)
@@ -75,13 +77,14 @@ class DownloadAndInjectWorker(
 
             // 3. Root Injection
             Log.d(TAG, "Injecting Frida server via root...")
-            rootManager.killOldServer()
-            val copied = rootManager.copyAndChmod(binFile)
-            if (!copied) {
+            rootManager.stopFridaServer()
+            
+            val targetPath = rootManager.copyAndChmod(binFile, stealthMode)
+            if (targetPath == null) {
                 return@withContext Result.failure()
             }
 
-            val started = rootManager.startServer()
+            val started = rootManager.startServer(targetPath, port)
             if (started) {
                 Log.d(TAG, "Successfully injected and started Frida server.")
                 // Cleanup

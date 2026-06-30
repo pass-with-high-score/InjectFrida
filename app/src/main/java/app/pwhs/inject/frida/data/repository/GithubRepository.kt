@@ -4,6 +4,7 @@ import android.os.Build
 import android.util.Log
 import app.pwhs.inject.frida.data.api.GithubApiService
 import app.pwhs.inject.frida.data.model.Asset
+import app.pwhs.inject.frida.data.model.GithubRelease
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
