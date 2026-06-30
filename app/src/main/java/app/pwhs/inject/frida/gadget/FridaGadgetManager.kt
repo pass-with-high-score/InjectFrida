@@ -23,27 +23,89 @@ class FridaGadgetManager(private val context: Context) {
         private const val TAG = "GadgetManager"
     }
 
-    suspend fun processApk(apkPath: String, targetVersion: String?, onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
+    suspend fun processApk(apkPath: String, targetVersion: String?, customFridaUri: String? = null, onLog: (String) -> Unit): Boolean = withContext(Dispatchers.IO) {
         try {
             val apkFile = File(apkPath)
             if (!apkFile.exists()) {
                 onLog("Error: Target APK not found at $apkPath")
                 return@withContext false
             }
-
             val workDir = File(context.cacheDir, "gadget_work")
             if (workDir.exists()) workDir.deleteRecursively()
             workDir.mkdirs()
 
-            onLog("Starting Gadget Injection Workflow for ${apkFile.name}")
+            var targetApkFile = apkFile
+
+            // Handle .apks / .xapk archives
+            if (apkPath.endsWith(".apks") || apkPath.endsWith(".xapk")) {
+                onLog("Detected .apks/.xapk archive. Extracting and merging (Anti-Split)...")
+                val extractedDir = File(workDir, "extracted_apks")
+                extractedDir.mkdirs()
+                java.util.zip.ZipFile(apkFile).use { zip ->
+                    zip.entries().asSequence().forEach { entry ->
+                        if (entry.name.endsWith(".apk")) {
+                            val outFile = File(extractedDir, File(entry.name).name)
+                            zip.getInputStream(entry).use { input ->
+                                FileOutputStream(outFile).use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                        }
+                    }
+                }
+                val extractedApks = extractedDir.listFiles { _, name -> name.endsWith(".apk") }
+                if (extractedApks != null && extractedApks.isNotEmpty()) {
+                    val baseApk = extractedApks.find { it.name == "base.apk" } ?: extractedApks.first()
+                    val baseModule = com.reandroid.apk.ApkModule.loadApkFile(baseApk)
+                    for (split in extractedApks) {
+                        if (split != baseApk) {
+                            onLog("Merging split: ${split.name}")
+                            val splitModule = com.reandroid.apk.ApkModule.loadApkFile(split)
+                            baseModule.merge(splitModule)
+                        }
+                    }
+                    val mergedApk = File(workDir, "merged_base.apk")
+                    baseModule.writeApk(mergedApk)
+                    targetApkFile = mergedApk
+                    onLog("Anti-Split successful! Proceeding with Gadget Injection...")
+                } else {
+                    onLog("Error: No APKs found in the archive.")
+                    return@withContext false
+                }
+            } else {
+                // Handle installed Split APKs
+                val parentDir = apkFile.parentFile
+                if (parentDir != null && parentDir.absolutePath.startsWith("/data/app/")) {
+                    val splits = parentDir.listFiles { _, name -> name.startsWith("split_") && name.endsWith(".apk") }
+                    if (splits != null && splits.isNotEmpty()) {
+                        onLog("Detected Installed Split APKs. Merging ${splits.size} splits into a single APK (Anti-Split)...")
+                        try {
+                            val baseModule = com.reandroid.apk.ApkModule.loadApkFile(apkFile)
+                            for (split in splits) {
+                                onLog("Merging split: ${split.name}")
+                                val splitModule = com.reandroid.apk.ApkModule.loadApkFile(split)
+                                baseModule.merge(splitModule)
+                            }
+                            val mergedApk = File(workDir, "merged_base.apk")
+                            baseModule.writeApk(mergedApk)
+                            targetApkFile = mergedApk
+                            onLog("Anti-Split successful! Proceeding with Gadget Injection...")
+                        } catch (e: Exception) {
+                            onLog("Anti-Split merging failed: ${e.message}")
+                        }
+                    }
+                }
+            }
+
+            onLog("Starting Gadget Injection Workflow for ${targetApkFile.name}")
             
             // Step 1: Decompilation (Unzip)
             val unzippedDir = File(workDir, "unzipped")
             unzippedDir.mkdirs()
-            unzipApk(apkFile, unzippedDir, onLog)
+            unzipApk(targetApkFile, unzippedDir, onLog)
             
             // Step 2: Integrate Gadget
-            integrateGadget(targetVersion, unzippedDir, onLog)
+            integrateGadget(targetVersion, customFridaUri, unzippedDir, onLog)
             
             // Step 3: Identify Entry Point
             val entryPoint = identifyEntryPoint(apkFile, unzippedDir, onLog)
@@ -94,22 +156,48 @@ class FridaGadgetManager(private val context: Context) {
         onLog("APK unzipped successfully.")
     }
 
-    private fun integrateGadget(version: String?, unzippedDir: File, onLog: (String) -> Unit) {
-        onLog("Step 2: Integrating Frida Gadget binary ($version)...")
+    private fun integrateGadget(version: String?, customFridaUri: String?, unzippedDir: File, onLog: (String) -> Unit) {
+        onLog("Step 2: Integrating Frida Gadget binary (${version ?: "Custom"})...")
         val libDir = File(unzippedDir, "lib")
         if (!libDir.exists()) libDir.mkdirs()
         
         // Find existing architectures
-        val archs = libDir.listFiles { file -> file.isDirectory }?.map { it.name } ?: listOf("arm64-v8a", "armeabi-v7a")
+        var archs = libDir.listFiles { file -> file.isDirectory }?.map { it.name } ?: emptyList()
+        if (archs.isEmpty()) {
+            archs = listOf("arm64-v8a", "armeabi-v7a")
+        }
         
-        // TODO: Actually download the frida-gadget-<version>-android-<arch>.so
-        // For now, we simulate placing the gadget by creating a dummy file to pack
-        for (arch in archs) {
-            val archDir = File(libDir, arch)
-            archDir.mkdirs()
-            val gadgetSo = File(archDir, "libfrida-gadget.so")
-            gadgetSo.writeText("DUMMY GADGET BINARY CONTENT") // Real implementation would download the actual .so
-            onLog("Integrated gadget into lib/$arch/")
+        if (customFridaUri != null) {
+            onLog("Reading custom gadget from URI...")
+            try {
+                val uri = android.net.Uri.parse(customFridaUri)
+                for (arch in archs) {
+                    val archDir = File(libDir, arch)
+                    archDir.mkdirs()
+                    val gadgetSo = File(archDir, "libfrida-gadget.so")
+                    
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(gadgetSo).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    onLog("Integrated custom gadget into lib/$arch/")
+                }
+                // Check if it's an XZ file (basic check: if we need to decompress)
+                // For simplicity, we assume custom file is already a raw .so file.
+            } catch (e: Exception) {
+                onLog("Error reading custom frida file: ${e.message}")
+            }
+        } else {
+            // TODO: Actually download the frida-gadget-<version>-android-<arch>.so
+            // For now, we simulate placing the gadget by creating a dummy file to pack
+            for (arch in archs) {
+                val archDir = File(libDir, arch)
+                archDir.mkdirs()
+                val gadgetSo = File(archDir, "libfrida-gadget.so")
+                gadgetSo.writeText("DUMMY GADGET BINARY CONTENT") // Real implementation would download the actual .so
+                onLog("Integrated gadget into lib/$arch/")
+            }
         }
     }
 

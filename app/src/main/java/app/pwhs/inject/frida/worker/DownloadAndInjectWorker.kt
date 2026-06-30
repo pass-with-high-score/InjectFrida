@@ -38,6 +38,7 @@ class DownloadAndInjectWorker(
 
             if (injectionMode == 1) { // NON_ROOT_GADGET
                 val targetApk = inputData.getString("TARGET_APK_PATH")
+                val customUri = inputData.getString("CUSTOM_FRIDA_URI")
                 if (targetApk.isNullOrEmpty()) {
                     Log.e(TAG, "Target APK path is empty.")
                     return@withContext Result.failure()
@@ -45,7 +46,7 @@ class DownloadAndInjectWorker(
                 
                 // TODO: Here we would pass log updates to UI. Since Worker logs are limited, 
                 // we assume GadgetManager handles it or we log to logcat.
-                val success = gadgetManager.processApk(targetApk, targetVersion) { msg ->
+                val success = gadgetManager.processApk(targetApk, targetVersion, customUri) { msg ->
                     Log.d(TAG, msg)
                 }
                 

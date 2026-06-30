@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.work.WorkInfo
 import app.pwhs.inject.frida.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
+import java.io.File
 import org.koin.androidx.compose.koinViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,6 +54,14 @@ fun MainScreen(
     var showVersionSheet by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showAppPicker by remember { mutableStateOf(false) }
+    
+    val fridaPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            viewModel.setCustomFridaUri(uri.toString())
+        }
+    }
     
     val versionSheetState = rememberModalBottomSheetState()
     val settingsSheetState = rememberModalBottomSheetState()
@@ -152,23 +161,52 @@ fun MainScreen(
             }
 
             if (injectionMode == app.pwhs.inject.frida.data.model.InjectionMode.NON_ROOT_GADGET) {
-                OutlinedTextField(
-                    value = targetApkPath,
-                    onValueChange = { viewModel.updateTargetApkPath(it) },
-                    label = { Text("Target APK Path") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                val selectedApp = installedApps.find { it.sourceDir == targetApkPath }
+                Surface(
+                    onClick = { showAppPicker = true },
                     shape = RoundedCornerShape(12.dp),
-                    trailingIcon = {
-                        IconButton(onClick = { showAppPicker = true }) {
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (selectedApp != null) {
+                            coil.compose.AsyncImage(
+                                model = selectedApp.icon,
+                                contentDescription = "Selected App Icon",
+                                modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp))
+                            )
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = selectedApp.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Tap to change",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        } else {
                             Icon(
-                                imageVector = androidx.compose.material.icons.Icons.Default.Settings, // Replace with list/apps icon
-                                contentDescription = "Pick Installed App",
-                                tint = MaterialTheme.colorScheme.primary
+                                imageVector = androidx.compose.material.icons.Icons.Default.Settings,
+                                contentDescription = "Pick App",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(32.dp).padding(end = 8.dp)
+                            )
+                            Text(
+                                text = if (targetApkPath.isNotEmpty()) "Selected: ${File(targetApkPath).name}\nTap to change" else "Select Target App",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
-                )
+                }
             }
 
             // Minimalist Version Selector
@@ -485,17 +523,28 @@ fun MainScreen(
                                 color = Color.Transparent,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
-                                    Text(
-                                        text = app.name,
-                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                                        color = MaterialTheme.colorScheme.onSurface
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    coil.compose.AsyncImage(
+                                        model = app.icon,
+                                        contentDescription = "App Icon",
+                                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp))
                                     )
-                                    Text(
-                                        text = app.packageName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Column {
+                                        Text(
+                                            text = app.name,
+                                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = app.packageName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }

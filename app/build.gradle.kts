@@ -44,6 +44,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("androidx.compose.material:material-icons-core")
     
+    // Coil
+    implementation(libs.coil.compose)
+
     // Koin
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)

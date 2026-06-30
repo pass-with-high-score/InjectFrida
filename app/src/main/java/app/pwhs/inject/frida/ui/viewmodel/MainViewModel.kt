@@ -25,7 +25,8 @@ import android.content.pm.PackageManager
 data class AppInfo(
     val name: String,
     val packageName: String,
-    val sourceDir: String
+    val sourceDir: String,
+    val icon: android.graphics.drawable.Drawable? = null
 )
 class MainViewModel(
     application: Application,
@@ -50,6 +51,9 @@ class MainViewModel(
 
     private val _selectedVersion = MutableStateFlow<String?>(null)
     val selectedVersion: StateFlow<String?> = _selectedVersion.asStateFlow()
+
+    private val _customFridaUri = MutableStateFlow<String?>(null)
+    val customFridaUri: StateFlow<String?> = _customFridaUri.asStateFlow()
 
     // Settings States
     private val _port = MutableStateFlow(settingsManager.getPort())
@@ -90,7 +94,8 @@ class MainViewModel(
                     AppInfo(
                         name = pm.getApplicationLabel(it).toString(),
                         packageName = it.packageName,
-                        sourceDir = it.sourceDir
+                        sourceDir = it.sourceDir,
+                        icon = pm.getApplicationIcon(it)
                     )
                 }
                 .sortedBy { it.name.lowercase() }
@@ -113,11 +118,15 @@ class MainViewModel(
         viewModelScope.launch {
             addLog("Fetching available Frida versions...")
             val versions = githubRepository.getAvailableVersions()
+            val allVersions = mutableListOf("Custom Local File")
+            allVersions.addAll(versions)
+            
+            _availableVersions.value = allVersions
             if (versions.isNotEmpty()) {
-                _availableVersions.value = versions
                 _selectedVersion.value = versions.first() // Select latest by default
                 addLog("Found ${versions.size} versions. Latest: ${versions.first()}")
             } else {
+                _selectedVersion.value = "Custom Local File"
                 addLog("Failed to fetch versions.")
             }
         }
@@ -125,6 +134,14 @@ class MainViewModel(
 
     fun selectVersion(version: String) {
         _selectedVersion.value = version
+    }
+
+    fun setCustomFridaUri(uri: String?) {
+        _customFridaUri.value = uri
+        if (uri != null) {
+            _selectedVersion.value = "Custom Local File"
+            addLog("Custom Frida file selected: $uri")
+        }
     }
 
     fun updatePort(newPort: String) {
@@ -216,6 +233,7 @@ class MainViewModel(
             .putBoolean("STEALTH_MODE", _stealthMode.value)
             .putInt("INJECTION_MODE", mode.value)
             .putString("TARGET_APK_PATH", _targetApkPath.value)
+            .putString("CUSTOM_FRIDA_URI", if (version == "Custom Local File") _customFridaUri.value else null)
             .build()
             
         val request = OneTimeWorkRequestBuilder<DownloadAndInjectWorker>()
